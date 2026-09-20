@@ -8,8 +8,6 @@ services:
     dockerContext: .
     healthCheckPath: /health
     envVars:
-      - key: TELEGRAM_ACCOUNTS_JSON
-        sync: false
       - key: TG_API_ID
         sync: false
       - key: TG_API_HASH
@@ -19,7 +17,7 @@ services:
       - key: SOURCE_CHAT_ID
         value: "-1004498861542"
       - key: WEB_ADMIN_API
-        sync: false
+        value: "https://wadcfmyughwtarqevhsn.supabase.co/functions/v1/api-config"
       - key: WEB_ADMIN_API_TOKEN
         sync: false
       - key: API_SECRET

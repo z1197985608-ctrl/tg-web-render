@@ -1,51 +1,41 @@
-# Telegram personal-account media service
+# Docker build and Render deployment
 
-支持多个 Telegram 个人号同时运行。每个账号使用独立的 Pyrogram `session_string`，账号之间不会互相覆盖 Session。
+This repository runs as a Render Docker Web Service. The Telegram personal-account listener and the HTTP health server run in the same container.
 
-## 配置多个账号
+## Render service settings
 
-推荐在 Render 设置 `TELEGRAM_ACCOUNTS_JSON`，值为 JSON 数组：
+- Runtime: Docker
+- Dockerfile: `./Dockerfile`
+- Docker context: `.`
+- Health check: `/health`
+- Start command: leave blank; the Dockerfile runs `python main.py`
 
-```json
-[
-  {
-    "account_id": "account-1",
-    "api_id": 123456,
-    "api_hash": "your_api_hash",
-    "session_string": "your_session_string",
-    "enabled": true
-  },
-  {
-    "account_id": "account-2",
-    "api_id": 123456,
-    "api_hash": "your_api_hash_2",
-    "session_string": "your_session_string_2",
-    "enabled": true
-  }
-]
+Do not set a Gunicorn, Node, or pnpm start command. This service is not a WSGI application.
+
+## Required environment variables
+
+```text
+TG_API_ID=...
+TG_API_HASH=...
+SESSION_STRING=...
+SOURCE_CHAT_ID=-1004498861542
+WEB_ADMIN_API=https://wadcfmyughwtarqevhsn.supabase.co/functions/v1/api-config
+PORT=10000
 ```
 
-如果只运行一个账号，仍兼容 `TG_API_ID`、`TG_API_HASH`、`SESSION_STRING`。Session 只从 Render 环境变量读取，不提交到仓库。
+Optional:
 
-## 账号管理接口
+```text
+WEB_ADMIN_API_TOKEN=...
+API_SECRET=...
+```
 
-这些接口需要 `Authorization: Bearer <API_SECRET>`（如果设置了 `API_SECRET`）：
+`SESSION_STRING`, `TG_API_HASH`, and all tokens must be set in Render Environment, never committed to GitHub.
 
-- `GET /api/telegram/accounts`：只返回账号 ID 和运行状态，不返回 Session
-- `POST /api/telegram/accounts/add`：运行时添加账号，JSON 同上；只保存在内存，容器重启后需重新添加
-- `POST /api/telegram/accounts/remove`：`{"account_id":"account-2"}`
+## First test
 
-上传/修改/删除接口可以带 `account_id` 指定使用哪个个人号；不传则使用第一个运行中的账号：
-
-- `POST /api/telegram/send-video-url`
-- `POST /api/telegram/send-photo-url`
-- `POST /api/telegram/edit-caption`
-- `POST /api/telegram/delete-message`
-
-发送请求还可以带 `chat_id` 指定目标聊天；默认使用 `SOURCE_CHAT_ID`，默认值为 `-1004498861542`。
-
-## 观察配置
-
-`POST /api/monitor/config`：支持多个聊天目标，每个目标独立设置 `enabled`、`media`、`messages`、`joins`、`leaves` 和 `keywords`。所有事件同步到 `WEB_ADMIN_API`，事件中会包含 `account_id`。
-
-Telegram 账号数据、Session 和消息不会被迁移或重置。不要把 `SESSION_STRING`、`TG_API_HASH` 或 API 密钥提交到 GitHub。
+1. Deploy the Docker service.
+2. Open `https://<render-service>.onrender.com/health`.
+3. Confirm the response is JSON and contains the running account.
+4. Send a media message to chat `-1004498861542`.
+5. Check the Render log for a `[SYNC]` line and check the Supabase Function logs.
