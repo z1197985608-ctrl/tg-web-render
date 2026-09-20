@@ -1,21 +1,25 @@
 services:
-- type: web
-  name: webhook-github-action
-  runtime: node
-  plan: starter
-  envVars:
-  - key: GITHUB_OWNER_NAME
-    sync: false
-  - key: GITHUB_REPO_NAME
-    sync: false
-  - key: GITHUB_WORKFLOW_ID
-    sync: false
-  - key: RENDER_WEBHOOK_SECRET
-    sync: false
-  - key: RENDER_API_KEY
-    sync: false
-  - key: GITHUB_API_TOKEN
-    sync: false
-  region: oregon
-  buildCommand: pnpm install && pnpm run build
-  startCommand: pnpm run start
+  - type: worker
+    name: tg-telegram-userbot
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: TG_API_ID
+        sync: false
+      - key: TG_API_HASH
+        sync: false
+      - key: SESSION_STRING
+        sync: false
+      - key: SOURCE_CHAT_ID
+        value: "-1004498861542"
+      - key: WEB_ADMIN_API
+        sync: false
+      - key: WEB_ADMIN_API_TOKEN
+        sync: false
+      - key: API_SECRET
+        sync: false
+      - key: PORT
+        value: "8080"
