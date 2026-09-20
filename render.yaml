@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: tg-telegram-userbot
+    name: tg-userbot-render
     runtime: docker
     plan: starter
     region: oregon
