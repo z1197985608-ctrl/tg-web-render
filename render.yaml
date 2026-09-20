@@ -1,11 +1,11 @@
 services:
   - type: web
     name: tg-telegram-userbot
-    runtime: python
+    runtime: docker
     plan: starter
     region: oregon
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: TG_API_ID
