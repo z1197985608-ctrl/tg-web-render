@@ -128,7 +128,8 @@ class AccountManager:
         await client.start()
         self.clients[account_id] = client
         self.definitions[account_id] = definition
-        print(f"[ACCOUNT] started {account_id}")
+        me = await client.get_me()
+        print(f"[ACCOUNT] started {account_id} user_id={getattr(me, 'id', None)} username={getattr(me, 'username', None)}")
         return {"account_id": account_id, "enabled": True, "status": "running"}
 
     async def remove(self, account_id: str) -> None:
@@ -246,12 +247,31 @@ def run_health_server() -> None:
 def matching_target(message: Message) -> dict[str, Any] | None:
     if not message.chat:
         return None
+    chat_id = int(message.chat.id)
     text = (message.text or message.caption or "").casefold()
-    for target in get_targets():
-        if target["enabled"] and int(target["chat_id"]) == int(message.chat.id):
+    targets = get_targets()
+    for target in targets:
+        if target["enabled"] and int(target["chat_id"]) == chat_id:
             if not target["keywords"] or any(k.casefold() in text for k in target["keywords"]):
                 return target
+    print(f"[IGNORE] chat_id={chat_id} expected={[t['chat_id'] for t in targets if t['enabled']]}")
     return None
+
+
+def media_info(message: Message) -> tuple[str | None, Any | None]:
+    media_fields = [
+        ("video", message.video),
+        ("photo", message.photo),
+        ("document", message.document),
+        ("audio", message.audio),
+        ("animation", message.animation),
+        ("voice", message.voice),
+        ("video_note", message.video_note),
+    ]
+    for kind, media in media_fields:
+        if media:
+            return kind, media
+    return None, None
 
 
 def client_handler(account_id: str):
@@ -259,9 +279,12 @@ def client_handler(account_id: str):
         target = matching_target(message)
         if not target:
             return
+
+        event_type = "message"
+        media_type, media = media_info(message)
         payload: dict[str, Any] = {
             "account_id": account_id,
-            "event_type": "message",
+            "event_type": event_type,
             "telegram_chat_id": message.chat.id,
             "telegram_message_id": message.id,
             "date": message.date.isoformat() if message.date else None,
@@ -269,11 +292,22 @@ def client_handler(account_id: str):
             "sender_id": message.from_user.id if message.from_user else None,
             "source": "Telegram personal account",
         }
-        if message.video or message.photo:
+
+        if media:
             if not target["media"]:
                 return
-            media = message.video or message.photo
-            payload.update({"event_type": "media", "type": "video" if message.video else "image", "title": (message.caption or "").strip() or getattr(media, "file_name", None) or f"media_{message.id}", "file_name": getattr(media, "file_name", None), "mime_type": getattr(media, "mime_type", None), "file_size": getattr(media, "file_size", None), "duration": getattr(media, "duration", None), "width": getattr(media, "width", None), "height": getattr(media, "height", None)})
+            event_type = "media"
+            payload.update({
+                "event_type": event_type,
+                "type": media_type,
+                "title": (message.caption or "").strip() or getattr(media, "file_name", None) or f"{media_type}_{message.id}",
+                "file_name": getattr(media, "file_name", None),
+                "mime_type": getattr(media, "mime_type", None),
+                "file_size": getattr(media, "file_size", None),
+                "duration": getattr(media, "duration", None),
+                "width": getattr(media, "width", None),
+                "height": getattr(media, "height", None),
+            })
         elif message.new_chat_members:
             if not target["joins"]:
                 return
@@ -284,11 +318,12 @@ def client_handler(account_id: str):
             payload.update({"event_type": "member_leave", "user_id": message.left_chat_member.id})
         elif not target["messages"]:
             return
+
         try:
             await sync_to_frontend(payload)
-            print(f"[SYNC] account={account_id} event={payload['event_type']} message={message.id}")
+            print(f"[SYNC] account={account_id} event={payload['event_type']} chat={message.chat.id} message={message.id}")
         except Exception as exc:
-            print(f"[SYNC ERROR] account={account_id} message={message.id}: {exc}")
+            print(f"[SYNC ERROR] account={account_id} chat={message.chat.id} message={message.id}: {exc}")
     return receive_events
 
 
@@ -298,6 +333,8 @@ async def sync_to_frontend(payload: dict[str, Any]) -> None:
         headers["Authorization"] = f"Bearer {WEB_ADMIN_API_TOKEN}"
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.post(WEB_ADMIN_API, json=payload, headers=headers)
+        response_text = response.text[:1000]
+        print(f"[WEBHOOK] status={response.status_code} response={response_text}")
         response.raise_for_status()
 
 
