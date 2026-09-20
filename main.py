@@ -6,8 +6,9 @@ from threading import Lock, Thread
 from typing import Any
 
 import httpx
-from pyrogram import Client, filters, idle
+from pyrogram import Client, idle
 from pyrogram.errors import RPCError
+from pyrogram.handlers import MessageHandler
 from pyrogram.types import Message
 
 DEFAULT_CHAT_ID = int(os.getenv("SOURCE_CHAT_ID", "-1004498861542"))
@@ -32,8 +33,7 @@ monitor_config: dict[str, Any] = {
     }]
 }
 
-# Account definitions are read from TELEGRAM_ACCOUNTS_JSON, or the legacy single-account variables.
-# Runtime-added accounts live only in memory and must be added again after a container restart.
+
 def load_account_definitions() -> list[dict[str, Any]]:
     raw = os.getenv("TELEGRAM_ACCOUNTS_JSON", "").strip()
     if raw:
@@ -54,11 +54,14 @@ def normalize_account(value: dict[str, Any]) -> dict[str, Any]:
     account_id = str(value.get("account_id") or value.get("id") or "").strip()
     if not account_id:
         raise ValueError("account_id is required")
+    session = str(value.get("session_string", "")).strip()
+    if not session:
+        raise ValueError(f"session_string is required for {account_id}")
     return {
         "account_id": account_id,
         "api_id": int(value["api_id"]),
         "api_hash": str(value["api_hash"]),
-        "session_string": str(value["session_string"]).strip(),
+        "session_string": session,
         "enabled": bool(value.get("enabled", True)),
     }
 
@@ -69,7 +72,10 @@ def authorized(handler: BaseHTTPRequestHandler) -> bool:
 
 def json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     length = int(handler.headers.get("Content-Length", "0"))
-    return json.loads(handler.rfile.read(length) or b"{}")
+    value = json.loads(handler.rfile.read(length) or b"{}")
+    if not isinstance(value, dict):
+        raise ValueError("request body must be a JSON object")
+    return value
 
 
 def get_targets() -> list[dict[str, Any]]:
@@ -100,11 +106,11 @@ class AccountManager:
 
     async def start_initial(self) -> None:
         for definition in load_account_definitions():
-            await self.add(definition, persist=False)
+            await self.add(definition)
         if not self.clients:
             raise RuntimeError("No enabled Telegram accounts configured")
 
-    async def add(self, raw: dict[str, Any], persist: bool = False) -> dict[str, Any]:
+    async def add(self, raw: dict[str, Any]) -> dict[str, Any]:
         definition = normalize_account(raw)
         account_id = definition["account_id"]
         if not definition["enabled"]:
@@ -118,12 +124,12 @@ class AccountManager:
             api_hash=definition["api_hash"],
             session_string=definition["session_string"],
         )
-        client.add_handler(client_handler(account_id), group=0)
+        client.add_handler(MessageHandler(client_handler(account_id), filters=None), group=0)
         await client.start()
         self.clients[account_id] = client
         self.definitions[account_id] = definition
         print(f"[ACCOUNT] started {account_id}")
-        return {"account_id": account_id, "enabled": True, "status": "running", "persisted": persist}
+        return {"account_id": account_id, "enabled": True, "status": "running"}
 
     async def remove(self, account_id: str) -> None:
         client = self.clients.pop(account_id, None)
@@ -145,19 +151,21 @@ class AccountManager:
         return [{"account_id": account_id, "status": "running"} for account_id in self.clients]
 
 
-manager: AccountManager
+manager: AccountManager | None = None
 
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/health":
-            self.send_json(200, {"status": "ok", "service": "telegram-userbots", "accounts": manager.public_list()})
+            accounts = manager.public_list() if manager else []
+            self.send_json(200, {"status": "ok", "service": "telegram-userbots", "accounts": accounts})
             return
         if self.path == "/api/monitor/config":
             self.send_json(200, {"ok": True, "targets": get_targets()})
             return
         if self.path == "/api/telegram/accounts":
-            self.send_json(200, {"ok": True, "accounts": manager.public_list()})
+            accounts = manager.public_list() if manager else []
+            self.send_json(200, {"ok": True, "accounts": accounts})
             return
         self.send_json(404, {"ok": False, "error": "not_found"})
 
@@ -166,9 +174,10 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.send_json(401, {"ok": False, "error": "unauthorized"})
             return
         try:
+            if manager is None:
+                raise RuntimeError("account_manager_not_ready")
             payload = json_body(self)
             action = self.path.removeprefix("/api/")
-            future = None
 
             if action == "monitor/config":
                 targets = payload.get("targets")
@@ -295,8 +304,8 @@ async def sync_to_frontend(payload: dict[str, Any]) -> None:
 async def application() -> None:
     global manager
     manager = AccountManager(asyncio.get_running_loop())
-    await manager.start_initial()
     Thread(target=run_health_server, daemon=True).start()
+    await manager.start_initial()
     print(f"Starting Telegram listeners: {manager.public_list()}")
     await idle()
     for account_id in list(manager.clients):
