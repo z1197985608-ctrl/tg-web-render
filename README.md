@@ -1,40 +1,47 @@
 # Telegram personal-account media service
 
-这是一个 Render Docker Web Service。个人号 Pyrogram 监听程序和 HTTP 保活服务运行在同一个容器内。
+支持动态配置多个观察目标，每个目标独立开关：
 
-## Docker 运行方式
+- `media`：视频/图片
+- `keywords`：关键词过滤，空数组表示不按关键词过滤
+- `messages`：普通文字消息
+- `joins`：用户进群
+- `leaves`：用户退群
+- `enabled`：整个目标开关
 
-- Dockerfile：`./Dockerfile`
-- HTTP 端口：使用 Render 注入的 `PORT`，默认配置为 `10000`
-- 健康检查：`GET /health`
-- Telegram 来源群聊：`-1004498861542`
-- Telegram 媒体仍保存在 Telegram，不会迁移、删除或重置账号数据
+默认目标为 `-1004498861542`。配置在内存中生效；如果需要重启后保留，请让 Bole 保存配置，并在服务启动后调用配置接口恢复。
 
-## Render 环境变量
+## 配置观察目标
 
-必填：
+`POST /api/monitor/config`
 
-- `TG_API_ID`
-- `TG_API_HASH`
-- `SESSION_STRING`
-- `WEB_ADMIN_API`
+请求头：`Authorization: Bearer <API_SECRET>`（仅当 Render 设置了 `API_SECRET` 时需要）
 
-可选：
+```json
+{
+  "targets": [
+    {
+      "chat_id": -1004498861542,
+      "enabled": true,
+      "media": true,
+      "keywords": ["电影", "教程"],
+      "messages": false,
+      "joins": true,
+      "leaves": true
+    }
+  ]
+}
+```
 
-- `WEB_ADMIN_API_TOKEN`
-- `API_SECRET`
-- `SOURCE_CHAT_ID`，默认 `-1004498861542`
+读取配置：`GET /api/monitor/config`
 
-## 前台调用接口
+## 前台同步数据
 
-如果设置了 `API_SECRET`，请求需要携带：
+所有匹配事件会以 JSON POST 到 `WEB_ADMIN_API`，`event_type` 取值：
 
-`Authorization: Bearer <API_SECRET>`
+- `media`
+- `message`
+- `member_join`
+- `member_leave`
 
-- `POST /api/telegram/send-video-url`
-- `POST /api/telegram/send-photo-url`
-- `POST /api/telegram/edit-caption`
-- `POST /api/telegram/delete-message`
-- `GET /health`
-
-不要把 `SESSION_STRING`、`TG_API_HASH` 或其他密钥提交到 GitHub。全部放在 Render Environment 中。
+Telegram 账号、Session 和消息不会被迁移或重置。不要把 `SESSION_STRING`、`TG_API_HASH` 或 API 密钥提交到代码库。
