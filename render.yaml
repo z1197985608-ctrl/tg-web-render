@@ -6,7 +6,6 @@ services:
     region: oregon
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    dockerCommand: python main.py
     healthCheckPath: /health
     envVars:
       - key: TG_API_ID
